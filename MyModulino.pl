@@ -262,39 +262,50 @@ sub main {
 
   # Accept input from a pipe and redirection if appropriate.
 
+  # Note: Using is_interactive() instead of -t allows t/perlcritic.t to pass.
   # A terminal is normal processing.
-  my $stdin_is_a_teletype = (-t STDIN);
+  # my $stdin_is_a_teletype = (-t STDIN);
   # A pipe sends a file path argument to STDIN.
   my $stdin_is_a_pipe    = (-p STDIN);
   # Redirected input sends the file contents to STDIN.
   # It is neither a teletype nor a pipe.
-  my $stdin_is_redirected   = (!$stdin_is_a_teletype) && (!$stdin_is_a_pipe);
+  # my $stdin_is_redirected   = (!$stdin_is_a_teletype) && (!$stdin_is_a_pipe);
   # A terminal is normal processing.
-  my $stdout_is_a_teletype = (-t STDOUT);
+  # my $stdout_is_a_teletype = (-t STDOUT);
   # A pipe sends a file path argument to STDIN.
-  my $stdout_is_a_pipe    = (-p STDOUT);
+  my $stdout_is_a_pipe    = (-p STDOUT);  # Ex. MyModulino.pl -v | sort
   # Redirected input sends the file contents to STDIN.
-  my $stdout_is_redirected=(!$stdout_is_a_teletype) && (!$stdout_is_a_pipe);
-  if ($ARGV{'-v'}) { warn "-t: $stdin_is_a_teletype -p:$stdin_is_a_pipe "
-    ." redirected_input: $stdin_is_redirected\n";
-    warn "-t: $stdout_is_a_teletype -p: $stdout_is_a_pipe "
-    ." redirected_output: $stdout_is_redirected\n";
+  # my $stdout_is_redirected=(!$stdout_is_a_teletype) && (!$stdout_is_a_pipe);
+  if ($ARGV{'-v'}) { # warn "-t: $stdin_is_a_teletype -p:$stdin_is_a_pipe "
+    # ." redirected_input: $stdin_is_redirected\n";
+    # warn "-t: $stdout_is_a_teletype -p: $stdout_is_a_pipe "
+    # ." redirected_output: $stdout_is_redirected\n";
     # Note: Without the argument, this does not appear to be correct on 
     # MyModulino -v > output.txt. is_interactive(*STDERR)
     # This subroutine returns true if *ARGV and the currently selected 
     # filehandle (usually *STDOUT) are connected to the terminal. 
     # You can also pass is_interactive a writable filehandle, in which case 
     # it requires that filehandle be connected to a terminal (instead of the
-    # currently selected). 
+    # currently selected).
+    warn "stdin_is_a_pipe: $stdin_is_a_pipe stdout_is_a_pipe: $stdout_is_a_pipe\n";
     warn 'is_interactive: ' . is_interactive() . "\n";
     warn 'is_interactive(*STDERR): ' . is_interactive(*STDERR) . "\n";
     warn 'is_interactive(*STDOUT): ' . is_interactive(*STDOUT) . "\n";
   }
 
+  # NOT INTERACTIVE
+  # Redirection from STDIN is not interactive
+  # Pipe is not interactive as a line of input files or type contents.
+  # Redirection to a file is not interactive on STDIN
+
+  # INTERACTIVE
+  # No input file, no redirection, no pipe is interactive on all FILEHANDLES.
+  # Redirection to a file is interactive on STDERR.
+  # Pipe from the program is interactive on STDERR.
+
   if ($stdin_is_a_pipe) {
-    my $status = process_piped_input($stdin_is_a_teletype, $stdin_is_a_pipe,
-      $stdin_is_redirected, $stdout_is_a_teletype, $stdout_is_a_pipe,
-      $stdout_is_redirected, $input_dir);
+    my $status = process_piped_input($stdin_is_a_pipe, $stdout_is_a_pipe,
+      $input_dir);
   }
 
   # Getopt::Euclid fills the %ARGV hash with chosen command line options.
@@ -333,21 +344,19 @@ sub main {
 
   # Process options entered by the user on the command line.
   process_command_line_options($PROGRAM, $VERSION, $USAGE,
-    $no_input_files_entered, $stdin_is_redirected, $stdout_is_redirected,
-    $stdin_is_a_pipe
+    $no_input_files_entered, $stdin_is_a_pipe
   );
 
   # Redirection gets the input from a file, so it doesn't need to be added
   # here.
+  # is_interactive() # 1
   if ($no_input_files_entered && !$stdin_is_a_pipe) {
     # Get input from stdin and put that input into a flat file.
     # Read data from standard in into a flat file called copy_of_stdin.txt.
     # This is done so the input can read by $csv_format->read_file($input_fh).
     # I tried opening a variable reference. It didn't work on
     # $csv_format->read_file($input_fh).
-    my $contents_entered = read_data_from_stdin_into_a_flat_file($input_dir,
-      $stdin_is_redirected, $stdout_is_redirected
-    );
+    my $contents_entered = read_data_from_stdin_into_a_flat_file($input_dir);
     if (!$contents_entered) {
       $return_val = print "Exiting program.\n";
       exit $SUCCESS;
@@ -419,36 +428,28 @@ sub display_header {
 
 
 #############################################################################
-# Usage: process_piped_input($stdin_is_a_teletype, $stdin_is_a_pipe,
-#          $stdin_is_redirected, $stdout_is_a_teletype, $stdout_is_a_pipe,
-#          $stdout_is_redirected, $input_dir);
+# Usage: process_piped_input($stdin_is_a_pipe,$stdout_is_a_pipe, $input_dir);
 # Purpose: Handle piped input. Read that input using <ARGV> or <>.
 # Returns: 0 Success
 # Parameters:
-# a boolean value indicating whether stdin is a teletype
-# a boolean value indicating whether stdin is a pipe
-# a boolean value indicating whether stdin is redirected
-# a boolean value indicating whether stdout is a teletype 
+# a boolean value indicating whether stdin is a pipe 
 # a boolean value indicating whether stdout is a pipe
-# a boolean value indicating whether stdout is redirected
 # input directory
 # Throws: "Cannot open $input_dir" . 'copy_of_stdin.txt'. ": $ERRNO\n"
 #         "Cannot close $input_dir" . "copy_of_stdin.txt: $ERRNO\n"
 # Comments: TODO: Receive input from a reference with arguments.
 sub process_piped_input {
-  my ($stdin_is_a_teletype, $stdin_is_a_pipe, $stdin_is_redirected,
-      $stdout_is_a_teletype, $stdout_is_a_pipe, $stdout_is_redirected,
-      $input_dir) = @_;
+  my ($stdin_is_a_pipe, $stdout_is_a_pipe, $input_dir) = @_;
   # Determine what to do with piped input.
 
   if ($ARGV{'-v'}) {
     warn "procedure process_piped_input\n";
     warn 'eof STDIN: \'' . eof(STDIN) . "'\n";
     warn "-p STDIN: $stdin_is_a_pipe\n";
-    warn "-t STDIN: $stdin_is_a_teletype\n";
+    # warn "-t STDIN: $stdin_is_a_teletype\n";
     #warn 'eof STDOUT: \'' . eof(STDOUT) . "'\n";
     warn "-p STDOUT: $stdout_is_a_pipe\n";
-    warn "-t STDOUT: $stdout_is_a_teletype\n";
+    # warn "-t STDOUT: $stdout_is_a_teletype\n";
     # warn 'is_interactive: ' . is_interactive() . "\n";
   }
 
@@ -462,10 +463,10 @@ sub process_piped_input {
     if ($ARGV{'-v'}) {
       warn 'eof STDIN: \'' . eof(STDIN) . "'\n";
       warn "-p STDIN: $stdin_is_a_pipe\n";
-      warn "-t STDIN: $stdin_is_a_teletype\n";
+      # warn "-t STDIN: $stdin_is_a_teletype\n";
       #warn 'eof STDOUT: \'' . eof(STDOUT) . "'\n";
       warn "-p STDOUT: $stdout_is_a_pipe\n";
-      warn "-t STDOUT: $stdout_is_a_teletype\n";
+      # warn "-t STDOUT: $stdout_is_a_teletype\n";
       # warn 'is_interactive: ' . is_interactive() . "\n";
       warn "String $INPUT_LINE_NUMBER: $input"; # $.
     }
@@ -566,31 +567,25 @@ sub process_piped_input {
 
 
 #############################################################################
-# Usage: read_data_from_stdin_into_a_flat_file($input_dir,
-#          $stdin_is_redirected, $stdout_is_redirected
-#        );
+# Usage: read_data_from_stdin_into_a_flat_file($input_dir);
 # Purpose: Read data into a flat file called "$input_dir"."copy_of_stdin.txt.
 # Returns: 0 or 1 ($contents_entered)
-# Parameters: input directory, a boolean indicating whether STDIN is
-#             redirected, a boolean indicating whether STDOUT is redirected
+# Parameters: input directory
 # Throws: "Cannot open $input_dir" . 'copy_of_stdin.txt'. ": $ERRNO\n"
 #         "Cannot close $input_dir" . "copy_of_stdin.txt: $ERRNO\n"
 # Comments: None
 sub read_data_from_stdin_into_a_flat_file {
-  my ($input_dir, $stdin_is_redirected, $stdout_is_redirected) = @_;
+  my ($input_dir) = @_;
 
   if ($ARGV{'-v'}) {
-    warn "procedure read_data_from_stdin_into_a_flat_file $input_dir "
-      . "'$stdin_is_redirected' '$stdout_is_redirected'\n";
+    warn "procedure read_data_from_stdin_into_a_flat_file $input_dir\n";
     warn 'Read input from STDIN by default, and write'
       . " it to a temporary file.\n";
   }
   open my $stdin_fh,  '>', $input_dir . 'copy_of_stdin.txt'
     or croak( "Cannot open $input_dir" . 'copy_of_stdin.txt'. ": $ERRNO\n" );
   my $contents_entered
-    = get_data_from_user_and_print_to_input_file($stdin_fh,
-    $stdin_is_redirected, $stdout_is_redirected
-  );
+    = get_data_from_user_and_print_to_input_file($stdin_fh);
   close $stdin_fh
     or croak( "Cannot close $input_dir" . "copy_of_stdin.txt: $ERRNO\n" );
 
@@ -599,35 +594,41 @@ sub read_data_from_stdin_into_a_flat_file {
 
 
 #############################################################################
-# Usage: get_data_from_user_and_print_to_input_file($stdin_fh,
-#          $stdin_is_redirected, $stdout_is_redirected
-#        );
+# Usage: get_data_from_user_and_print_to_input_file($stdin_fh);
 # Purpose: Read data from standard in. Reading ends after an empty line.
 #          Print input to an input file for further processing.
 # Returns: 0 or 1 ($contents_entered)
-# Parameters: standard in file handle, a boolean indicating whether STDIN is
-#             redirected, a boolean indicating whether STDOUT is redirected
+# Parameters: standard in file handle
 # Throws:
 # Comments: None
 sub get_data_from_user_and_print_to_input_file {
-  my ($stdin_fh, $stdin_is_redirected, $stdout_is_redirected) = @_;
+  my ($stdin_fh) = @_;
 
   if ($ARGV{'-v'}) { warn 'procedure '
-    ."get_data_from_user_and_print_to_input_file $stdin_fh "
-    ."'$stdin_is_redirected' '$stdout_is_redirected'\n";
+    ."get_data_from_user_and_print_to_input_file $stdin_fh\n";
   }
-  if ($stdout_is_redirected) { warn 'STDOUT is redirected to a file'; }
-  if ($stdin_is_redirected) { warn 'STDIN is redirected from a file'; }
+  #if ($stdout_is_redirected) { warn 'STDOUT is redirected to a file'; }
+  #if ($stdin_is_redirected) { warn 'STDIN is redirected from a file'; }
+  # TODO: Display this message or not prompt on redirection in.
   my $str = 'Enter file contents to parse from CSV '
     . "(Hit enter once or twice to exit): \n";
   $str .= "EXAMPLE:\n";
   $str .= "field1, field2, field3\n";
   $str .= "first_name, last_name, year\n";
   $str .= "INPUT: \n";
-  $return_val = print $str;
   # Display the above message for context when STDOUT is redirected.
   # There is no user input when STDIN is redirected.
-  if ($stdout_is_redirected && !$stdin_is_redirected) { warn $str; }
+  #if ($stdout_is_redirected && !$stdin_is_redirected) { warn $str; }
+  # TODO: both need to run on output redirection MyModulino.pl > output.txt
+  # is_interactive is false !is_interactive is true
+  # This works when output is redirected.
+  if (!is_interactive() && is_interactive(*STDERR)) { 
+    warn "$str";
+    $return_val = print "$str";
+  }
+  else {
+    $return_val = print $str;
+  }
   my $contents_entered = 0;
 
   INPUT:
@@ -637,8 +638,13 @@ sub get_data_from_user_and_print_to_input_file {
     # $line =~ /\S/xms or last INPUT;
     if ($line =~ /\S/xms) {
       # Display the input in the file which was redirected to.
-      if ($stdin_is_redirected || $stdout_is_redirected) { $return_val 
-        = print $line. "\n";
+      #if ($stdin_is_redirected || $stdout_is_redirected) { $return_val 
+      #  = print $line. "\n";
+      #}
+      # Display the lines in a file on output redirection and 
+      # to STDOUT on input redirection.
+      if (!is_interactive()) { $return_val 
+        = print "$line\n";
       }
       $return_val = print {$stdin_fh} $line. "\n";
       $contents_entered = 1;
@@ -656,26 +662,24 @@ sub get_data_from_user_and_print_to_input_file {
 
 #############################################################################
 # Usage: process_command_line_options($program, $version, $usage,
-#          $no_input_files_entered, $stdin_is_redirected,
-#          $stdout_is_redirected, $stdin_is_a_pipe
+#          $no_input_files_entered, $stdin_is_a_pipe
 #        );
 # Purpose: Executes command line options.
 # Returns: a reference to a hash of arguments
 # Parameters: program name, version number, usage as a string, a boolean
 #            representing whether input files were entered, a boolean
-#            representing whether STDIN is redirected from a file, a boolean
-#            representing whether STDOUT is redirected to a file, a boolean
 #            representing whether STDIN is a pipe
 # Throws: No exceptions
 # Comments: None
 # TODO: replace arguments with named arguments in a hash reference.
 sub process_command_line_options {
   my ($program, $version, $usage, $no_input_files_entered,
-    $stdin_is_redirected, $stdout_is_redirected, $stdin_is_a_pipe) = @_;
-  if ($ARGV{'-v'}) { warn "procedure process_command_line_options $program, "
-    ."$version, $usage, $no_input_files_entered, $stdin_is_redirected, "
-    ."$stdout_is_redirected";
-  }
+    $stdin_is_a_pipe) = @_;
+  # if ($ARGV{'-v'}) { #warn "procedure process_command_line_options $program, "
+    # ."$version, $usage, $no_input_files_entered, $stdin_is_redirected, "
+    #."$stdout_is_redirected";
+  # }
+  if ($ARGV{'-v'}) { warn "procedure process_command_line_options\n"; }
 
   # Getopt::Euclid has parsed commandline parameters and stored them in %ARGV
 
@@ -687,12 +691,12 @@ sub process_command_line_options {
   # $ARGV{'-infile'}
   if ($ARGV{'-i'}) {
     display_input_file_argument($ARGV{'-i'}, $no_input_files_entered,
-      $stdin_is_redirected, $stdin_is_a_pipe
+      $stdin_is_a_pipe
     );
   }
   # $ARGV{'-outfile'}
   if ($ARGV{'-o'}) {
-    display_output_file_argument($ARGV{'-o'}, $stdout_is_redirected);
+    display_output_file_argument($ARGV{'-o'});
   }
 
   # Verbose
@@ -1006,27 +1010,26 @@ sub display_help {
 
 #############################################################################
 # Usage: display_input_file_argument($input_file_argument,
-#          $no_input_files_entered, $stdin_is_redirected, $stdin_is_a_pipe
+#          $no_input_files_entered, $stdin_is_a_pipe
 #        );
 # Purpose: display the input file argument.
 # Returns: String containing input file argument (-i) value.
 # Parameters: input file argument, boolean no input files entered, boolean
-#             STDIN is redirected, boolean STDIN is a pipe
+#             STDIN is a pipe
 # Throws: No exceptions
 # Comments: None
 sub display_input_file_argument {
-  my ($input_file_argument, $no_input_files_entered, $stdin_is_redirected,
-    $stdin_is_a_pipe) = @_;
+  my ($input_file_argument, $no_input_files_entered, $stdin_is_a_pipe) = @_;
   if ($ARGV{'-v'}) { warn 'procedure '
     ."display_input_file_argument $input_file_argument "
-    ."$no_input_files_entered $stdin_is_redirected $stdin_is_a_pipe\n";
+    ."$no_input_files_entered $stdin_is_a_pipe\n";
   }
 
   my $str = "input file: $input_file_argument";
   # if ($input_file_argument eq q{-}) {
   if ($no_input_files_entered) { $str .= ' STDIN'; }
   if ($stdin_is_a_pipe) { $str .= ' STDIN receives input from a pipe'; }
-  if ($stdin_is_redirected) { $str .= ' STDIN is redirected from a file'; }
+  # if ($stdin_is_redirected) { $str .= ' STDIN is redirected from a file'; }
   $str .= "\n";
   $return_val = print $str;
   return $str;
@@ -1084,28 +1087,24 @@ sub display_manual {
 
 
 #############################################################################
-# Usage: display_output_file_argument($output_file_argument,
-#   $stdout_is_redirected
-# );
+# Usage: display_output_file_argument($output_file_argument);
 # Purpose: Display the output file argument entered at the command line.
 # Returns: String containing output file argument (-o).
-# Parameters: output file argument entered at the command line, a boolean
-#             indicating whether STDOUT is redirected
+# Parameters: output file argument entered at the command line
 # Throws: No exceptions
 # Comments: None
 sub display_output_file_argument {
-  my ($output_file_argument, $stdout_is_redirected) = @_;
+  my ($output_file_argument) = @_;
   if ($ARGV{'-v'}) { warn 'procedure '
-    ."display_output_file_argument $output_file_argument "
-    ."$stdout_is_redirected\n";
+    ."display_output_file_argument $output_file_argument\n";
   }
 
   my $str = "output file: $output_file_argument";
-  if ($stdout_is_redirected) {
-    warn "STDOUT is redirected to a file\n";
-    $str .= ' STDOUT is redirected to a file';
-  }
-  elsif ($output_file_argument eq q{-}) {
+  #if ($stdout_is_redirected) {
+  #  warn "STDOUT is redirected to a file\n";
+  #  $str .= ' STDOUT is redirected to a file';
+  #}
+  if ($output_file_argument eq q{-}) {
     $str .= ' STDOUT';
   }
   $str .= "\n";
