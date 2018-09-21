@@ -54,7 +54,7 @@ use Readonly;
 use English qw(-no_match_vars); # exclude -no_match_vars for performance
 # warn is used for errors (croak) and warnings (warn)
 use Carp;
-# Returns true if *ARGV and the currently selected filehandle (usually 
+# Returns true if *ARGV and the currently selected filehandle (usually
 # *STDOUT) are connected to the terminal.
 use IO::Interactive qw(is_interactive);
 
@@ -134,7 +134,7 @@ BEGIN {
   our $USAGE = "perl $PROGRAM [-i[nfile] [=] "
              . 'C:\\Users\\machine_user\\input.txt ][-o[utfile] [=] '
              . 'C:\\Users\\machine_user\\output.txt ][-v[erbose] ]'
-             . '[--help ][--man ][--usage ][--version ][/? ]'
+             . '[-h[elp] ][--help ][--man ][--usage ][--version ][/? ]'
              . '[-- C:\\Users\\machine_user\\input2.txt [C:\\Users\\'
              . "machine_user\\input3.txt ...]]\n";
   Readonly our $ERROR => -1;
@@ -253,7 +253,7 @@ sub main {
   if ($ARGV{'-v'}) { warn "procedure main @ARGV\n"; }
 
   # Default variables
-  # Note: This directory needs to change if the script is used on another 
+  # Note: This directory needs to change if the script is used on another
   # computer.
   my $input_dir   = 'C:\\Users\\machine_user\\';
   my $output_dir  = $input_dir;
@@ -265,7 +265,7 @@ sub main {
   # Note: Using is_interactive() instead of -t allows t/perlcritic.t to pass.
   # A terminal is normal processing.
   # my $stdin_is_a_teletype = (-t STDIN);
-  # A pipe sends a file path argument to STDIN.
+  # A pipe sends a file path argument or content to STDIN.
   my $stdin_is_a_pipe    = (-p STDIN);
   # Redirected input sends the file contents to STDIN.
   # It is neither a teletype nor a pipe.
@@ -280,11 +280,11 @@ sub main {
     # ." redirected_input: $stdin_is_redirected\n";
     # warn "-t: $stdout_is_a_teletype -p: $stdout_is_a_pipe "
     # ." redirected_output: $stdout_is_redirected\n";
-    # Note: Without the argument, this does not appear to be correct on 
+    # Note: Without the argument, this does not appear to be correct on
     # MyModulino -v > output.txt. is_interactive(*STDERR)
-    # This subroutine returns true if *ARGV and the currently selected 
-    # filehandle (usually *STDOUT) are connected to the terminal. 
-    # You can also pass is_interactive a writable filehandle, in which case 
+    # This subroutine returns true if *ARGV and the currently selected
+    # filehandle (usually *STDOUT) are connected to the terminal.
+    # You can also pass is_interactive a writable filehandle, in which case
     # it requires that filehandle be connected to a terminal (instead of the
     # currently selected).
     warn "stdin_is_a_pipe: $stdin_is_a_pipe stdout_is_a_pipe: $stdout_is_a_pipe\n";
@@ -304,14 +304,17 @@ sub main {
   # Pipe from the program is interactive on STDERR.
 
   if ($stdin_is_a_pipe) {
-    my $status = process_piped_input($stdin_is_a_pipe, $stdout_is_a_pipe,
-      $input_dir);
+    my $status = process_piped_input({ stdin_is_a_pipe=>$stdin_is_a_pipe,
+      stdout_is_a_pipe=>$stdout_is_a_pipe, input_dir=>$input_dir,
+      file_handle_ref=>\*ARGV
+    });
   }
 
   # Getopt::Euclid fills the %ARGV hash with chosen command line options.
   # Use program arguments for input and output files if given.
   # Don't forget to use quotes on $ARGV{'argument'}; Barewords cause errors
   # on --.
+  if ($ARGV{'-v'}) { my $str = _display_argv_hash(); }
   # Always allow - as a special filename.
   # A widely used convention is that a dash (-) where an input file is
   # expected means "read from standard input", and a dash where an output
@@ -323,6 +326,7 @@ sub main {
   #}
   my $input_files_were_entered_after_two_dashes = defined $ARGV{q{--}};
   # Input files can come from -i=file path or after -- on the command line.
+  # Input files piped into the program can be added to -- storage.
   # If no input files were entered, read from STDIN by default
   # (no input files in '--' and input file = '-', which stands for STDIN).
   my $no_input_files_entered = ((!defined $ARGV{q{--}}) && ($ARGV{'-i'} eq q{-}));
@@ -339,13 +343,15 @@ sub main {
       $output_path = $ARGV{'-o'};
   }
 
-  # Alternate: you can use argv=>\@ARGV instead.
-  display_header({ program=>$PROGRAM, argv=>[@ARGV] });
+  my $nbr = _common_regexp();
+
+  display_header($PROGRAM, @ARGV);
 
   # Process options entered by the user on the command line.
-  process_command_line_options($PROGRAM, $VERSION, $USAGE,
-    $no_input_files_entered, $stdin_is_a_pipe
-  );
+  process_command_line_options({ program=>$PROGRAM, version=>$VERSION,
+    usage=>$USAGE, no_input_files_entered=>$no_input_files_entered,
+    stdin_is_a_pipe=>$stdin_is_a_pipe
+  });
 
   # Redirection gets the input from a file, so it doesn't need to be added
   # here.
@@ -356,7 +362,9 @@ sub main {
     # This is done so the input can read by $csv_format->read_file($input_fh).
     # I tried opening a variable reference. It didn't work on
     # $csv_format->read_file($input_fh).
-    my $contents_entered = read_data_from_stdin_into_a_flat_file($input_dir);
+    my $contents_entered = read_data_from_stdin_into_a_flat_file($input_dir,
+      \*ARGV
+    );
     if (!$contents_entered) {
       $return_val = print "Exiting program.\n";
       exit $SUCCESS;
@@ -364,11 +372,13 @@ sub main {
   }
 
   # Generate the list of files to process.
-  my @input_file_paths = generate_unique_input_files_array( $input_dir,
-    $input_file_was_entered, $input_files_were_entered_after_two_dashes,
-    $no_input_files_entered
-  );
-  $return_val = print "Process unique list of input files:\n";
+  my @input_file_paths = generate_unique_input_files_array({
+    input_dir=>$input_dir, input_file_was_entered=>$input_file_was_entered,
+    input_files_were_entered_after_two_dashes=>
+    $input_files_were_entered_after_two_dashes,
+    no_input_files_entered=>$no_input_files_entered
+  });
+  $return_val = print "Process unique list of input files: \n";
   foreach my $file_path (@input_file_paths) {
     $return_val = print "'$file_path' ";
   }
@@ -380,17 +390,19 @@ sub main {
     if ($ARGV{'-v'}) { warn "Open output file.\n"; }
     #unlink $output_fh or croak( "Cannot unlink $output_path: $!\n" );
     # open and clear output file
-    open $output_fh,  '>', $output_path
+    open $output_fh,  '>:encoding(UTF-8)', $output_path
       or croak( "Cannot open $output_path: $ERRNO\n" ); # $!
     close $output_fh
       or croak( "Cannot close $output_path: $ERRNO\n" ); # $!
     # reopen output file to append to it
-    open $output_fh,  '>>', $output_path
+    open $output_fh,  '>>:encoding(UTF-8)', $output_path
       or croak( "Cannot open $output_path: $ERRNO\n" );
   }
-  my $status = parse_csv_input_files_and_write_to_output(
-    $output_fh, $output_path, $output_file_was_entered, @input_file_paths
-  );
+  my $status = parse_csv_input_files_and_write_to_output({
+    output_fh=>$output_fh, output_path=>$output_path,
+    output_file_was_entered=>$output_file_was_entered,
+    input_file_paths=>[@input_file_paths]
+  });
   if ($output_file_was_entered) {
     close $output_fh or croak( "Cannot close $output_path: $ERRNO\n" );
   }
@@ -399,76 +411,89 @@ sub main {
 
 
 #############################################################################
-# Usage: display_header({ program=>$PROGRAM, argv=>@ARGV });
+# Usage: display_header($PROGRAM, @ARGV);
 # Purpose: Displays the header and processes command line options.
 # Returns: string with the header in it.
-# Parameters: A reference to a hash with named parameters as input.
+# Parameters: program name, arguments in @ARGV
 # Throws: No exceptions
 # Comments: The reference is most useful to pass more than three arguments.
 sub display_header {
-  my ($arg_ref) = @_;
+  my ($program, @ARGV) = @_;
 
   if ($ARGV{'-v'}) { warn 'procedure display_header '
-    ."$arg_ref->{'program'} @{$arg_ref->{'argv'}}\n";
+    ."$program @ARGV\n";
   }
 
   # Readonly did not work with these strings.
   my $STRING        = q{-};
   my $STRING_LENGTH = 78;
   my $str           = ($STRING x $STRING_LENGTH) . "\n";
-  $str             .= "$arg_ref->{'program'}\n";
+  $str             .= "$program\n";
   $str             .= ($STRING x $STRING_LENGTH) . "\n";
   $return_val       = print $str;
 
-  $str             .= "Arguments: @{$arg_ref->{'argv'}}\n";
-  $return_val       = print "Arguments: @{$arg_ref->{'argv'}}\n";
+  $str             .= "Arguments: @ARGV\n";
+  $return_val       = print "Arguments: @ARGV\n";
 
   return $str;
 } # End display_header
 
 
 #############################################################################
-# Usage: process_piped_input($stdin_is_a_pipe,$stdout_is_a_pipe, $input_dir);
+# Usage: process_piped_input({ stdin_is_a_pipe=>$stdin_is_a_pipe,
+#     stdout_is_a_pipe=>$stdout_is_a_pipe, input_dir=>$input_dir,
+#     file_handle_ref=>$file_handle_ref });
 # Purpose: Handle piped input. Read that input using <ARGV> or <>.
 # Returns: 0 Success
-# Parameters:
-# a boolean value indicating whether stdin is a pipe 
+# Parameters: a hash reference containing named parameters:
+# a boolean value indicating whether stdin is a pipe
 # a boolean value indicating whether stdout is a pipe
 # input directory
+# file handle reference to a glob of the file handle
 # Throws: "Cannot open $input_dir" . 'copy_of_stdin.txt'. ": $ERRNO\n"
 #         "Cannot close $input_dir" . "copy_of_stdin.txt: $ERRNO\n"
 # Comments: TODO: Receive input from a reference with arguments.
 sub process_piped_input {
-  my ($stdin_is_a_pipe, $stdout_is_a_pipe, $input_dir) = @_;
+  my ($arg_ref) = @_;
   # Determine what to do with piped input.
 
   if ($ARGV{'-v'}) {
     warn "procedure process_piped_input\n";
     warn 'eof STDIN: \'' . eof(STDIN) . "'\n";
-    warn "-p STDIN: $stdin_is_a_pipe\n";
-    # warn "-t STDIN: $stdin_is_a_teletype\n";
+    warn "-p STDIN: $arg_ref->{'stdin_is_a_pipe'}\n";
+    # warn "-t STDIN: $arg_ref->{'stdin_is_a_teletype'}\n";
     #warn 'eof STDOUT: \'' . eof(STDOUT) . "'\n";
-    warn "-p STDOUT: $stdout_is_a_pipe\n";
-    # warn "-t STDOUT: $stdout_is_a_teletype\n";
+    warn "-p STDOUT: $arg_ref->{'stdout_is_a_pipe'}\n";
+    # warn "-t STDOUT: $arg_ref->{'stdout_is_a_teletype'}\n";
     # warn 'is_interactive: ' . is_interactive() . "\n";
+    warn "file_handle_ref type: " . ref $arg_ref->{file_handle_ref};
   }
 
-  open my $stdin_fh,  '>', $input_dir . 'copy_of_stdin.txt'
-    or croak( "Cannot open $input_dir" . 'copy_of_stdin.txt'. ": $ERRNO\n" );
+  die "Argument file_handle_ref in process_piped_input must be a reference "
+    . "to a glob." if (ref $arg_ref->{file_handle_ref} ne 'GLOB');
+
+  open my $stdin_fh,  '>', $arg_ref->{'input_dir'} . 'copy_of_stdin.txt'
+    or croak( "Cannot open $arg_ref->{'input_dir'}" . 'copy_of_stdin.txt'
+      . ": $ERRNO\n" );
 
   my $input_is_a_list_of_files = 1;
+  # Dereference the reference into a glob. This means you must pass a
+  # reference to a glob, like \*ARGV or \*$file_handle.
+  # You have to dereference before reading the file handle.
+  # You cannot dereference in <>.
+  my $file_handle = *{ $arg_ref->{'file_handle_ref'} };
 
   GET_INPUT_FROM_PIPE:
-  while (defined(my $input = <ARGV>)) {
+  while (defined(my $input = <$file_handle>)) {
     if ($ARGV{'-v'}) {
       warn 'eof STDIN: \'' . eof(STDIN) . "'\n";
-      warn "-p STDIN: $stdin_is_a_pipe\n";
-      # warn "-t STDIN: $stdin_is_a_teletype\n";
+      warn "-p STDIN: $arg_ref->{'stdin_is_a_pipe'}\n";
+      # warn "-t STDIN: $arg_ref->{'stdin_is_a_teletype'}\n";
       #warn 'eof STDOUT: \'' . eof(STDOUT) . "'\n";
-      warn "-p STDOUT: $stdout_is_a_pipe\n";
-      # warn "-t STDOUT: $stdout_is_a_teletype\n";
+      warn "-p STDOUT: $arg_ref->{'stdout_is_a_pipe'}\n";
+      # warn "-t STDOUT: $arg_ref->{'stdout_is_a_teletype'}\n";
       # warn 'is_interactive: ' . is_interactive() . "\n";
-      warn "String $INPUT_LINE_NUMBER: $input"; # $.
+      warn "String $INPUT_LINE_NUMBER: $input\n"; # $.
     }
 
     # Save the input into a flat file.
@@ -561,40 +586,53 @@ sub process_piped_input {
     last GET_INPUT_FROM_PIPE if $input !~ /\S/xms;
   }
   close $stdin_fh
-    or croak( "Cannot close $input_dir" . "copy_of_stdin.txt: $ERRNO\n" );
+    or croak( "Cannot close $arg_ref->{'input_dir'}" . 'copy_of_stdin.txt: '
+      ."$ERRNO\n" );
   return $SUCCESS;
 } # End process_piped_input
 
 
 #############################################################################
-# Usage: read_data_from_stdin_into_a_flat_file($input_dir);
+# Usage: read_data_from_stdin_into_a_flat_file($input_dir, $file_handle_ref);
 # Purpose: Read data into a flat file called "$input_dir"."copy_of_stdin.txt.
 # Returns: 0 or 1 ($contents_entered)
 # Parameters: input directory
+#   a file handle reference to a glob of the file handle. This is done for
+#   testing.
 # Throws: "Cannot open $input_dir" . 'copy_of_stdin.txt'. ": $ERRNO\n"
 #         "Cannot close $input_dir" . "copy_of_stdin.txt: $ERRNO\n"
 # Comments: None
 sub read_data_from_stdin_into_a_flat_file {
-  my ($input_dir) = @_;
+  my ($input_dir, $file_handle_ref) = @_;
 
   if ($ARGV{'-v'}) {
     warn "procedure read_data_from_stdin_into_a_flat_file $input_dir\n";
     warn 'Read input from STDIN by default, and write'
       . " it to a temporary file.\n";
+    warn "file_handle_ref type: " . ref $file_handle_ref;
   }
+  
+  die "Second argument in read_data_from_stdin_into_a_flat_file must be a "
+    . "reference to a glob." if (ref $file_handle_ref ne 'GLOB');
+  
   open my $stdin_fh,  '>', $input_dir . 'copy_of_stdin.txt'
     or croak( "Cannot open $input_dir" . 'copy_of_stdin.txt'. ": $ERRNO\n" );
   my $contents_entered
-    = get_data_from_user_and_print_to_input_file($stdin_fh);
+    = get_data_from_user_and_print_to_input_file($stdin_fh,$file_handle_ref);
   close $stdin_fh
     or croak( "Cannot close $input_dir" . "copy_of_stdin.txt: $ERRNO\n" );
+
+  if ($contents_entered) {
+    $return_val = print "Wrote input to file: ${input_dir}copy_of_stdin.txt\n";
+  }
 
   return $contents_entered;
 } # End read_data_from_stdin_into_a_flat_file
 
 
 #############################################################################
-# Usage: get_data_from_user_and_print_to_input_file($stdin_fh);
+# Usage: get_data_from_user_and_print_to_input_file($stdin_fh,
+#   $file_handle_ref);
 # Purpose: Read data from standard in. Reading ends after an empty line.
 #          Print input to an input file for further processing.
 # Returns: 0 or 1 ($contents_entered)
@@ -602,10 +640,11 @@ sub read_data_from_stdin_into_a_flat_file {
 # Throws:
 # Comments: None
 sub get_data_from_user_and_print_to_input_file {
-  my ($stdin_fh) = @_;
+  my ($stdin_fh, $file_handle_ref) = @_;
 
   if ($ARGV{'-v'}) { warn 'procedure '
-    ."get_data_from_user_and_print_to_input_file $stdin_fh\n";
+    ."get_data_from_user_and_print_to_input_file $stdin_fh "
+    ."$file_handle_ref\n";
   }
   #if ($stdout_is_redirected) { warn 'STDOUT is redirected to a file'; }
   #if ($stdin_is_redirected) { warn 'STDIN is redirected from a file'; }
@@ -615,35 +654,36 @@ sub get_data_from_user_and_print_to_input_file {
   $str .= "EXAMPLE:\n";
   $str .= "field1, field2, field3\n";
   $str .= "first_name, last_name, year\n";
-  $str .= "INPUT: \n";
+  $str .= "INPUT: ";
   # Display the above message for context when STDOUT is redirected.
   # There is no user input when STDIN is redirected.
   #if ($stdout_is_redirected && !$stdin_is_redirected) { warn $str; }
   # TODO: both need to run on output redirection MyModulino.pl > output.txt
   # is_interactive is false !is_interactive is true
   # This works when output is redirected.
-  if (!is_interactive() && is_interactive(*STDERR)) { 
-    warn "$str";
-    $return_val = print "$str";
+  if (!is_interactive() && is_interactive(*STDERR)) {
+    warn "$str\n";
   }
-  else {
-    $return_val = print $str;
-  }
+  $return_val = print "$str\n";
+
   my $contents_entered = 0;
+  # Dereference the reference into a glob. This means you must pass a
+  # reference to a glob, like \*ARGV or \*$file_handle.
+  my $file_handle = *{ $file_handle_ref };
 
   INPUT:
-  while (defined(my $line = <ARGV>)) {
+  while (defined(my $line = <$file_handle>)) {
     # Type Ctrl + Z or Ctrl + D to end input
     chomp $line;
     # $line =~ /\S/xms or last INPUT;
     if ($line =~ /\S/xms) {
       # Display the input in the file which was redirected to.
-      #if ($stdin_is_redirected || $stdout_is_redirected) { $return_val 
+      #if ($stdin_is_redirected || $stdout_is_redirected) { $return_val
       #  = print $line. "\n";
       #}
-      # Display the lines in a file on output redirection and 
+      # Display the lines in a file on output redirection and
       # to STDOUT on input redirection.
-      if (!is_interactive()) { $return_val 
+      if (!is_interactive()) { $return_val
         = print "$line\n";
       }
       $return_val = print {$stdin_fh} $line. "\n";
@@ -655,26 +695,27 @@ sub get_data_from_user_and_print_to_input_file {
   }
   if (!$contents_entered) {
     $return_val = print "No contents entered.\n";
-  };
+  }
   return $contents_entered;
 } # End get_data_from_user_and_print_to_input_file
 
 
 #############################################################################
-# Usage: process_command_line_options($program, $version, $usage,
-#          $no_input_files_entered, $stdin_is_a_pipe
-#        );
+# Usage: process_command_line_options({ program=>$PROGRAM, version=>$VERSION,
+#    usage=>$USAGE, no_input_files_entered=>$no_input_files_entered,
+#    stdin_is_a_pipe=>$stdin_is_a_pipe
+# });
 # Purpose: Executes command line options.
 # Returns: a reference to a hash of arguments
-# Parameters: program name, version number, usage as a string, a boolean
+# Parameters: a hash reference containing named parameters:
+#            program name, version number, usage as a string, a boolean
 #            representing whether input files were entered, a boolean
 #            representing whether STDIN is a pipe
 # Throws: No exceptions
 # Comments: None
 # TODO: replace arguments with named arguments in a hash reference.
 sub process_command_line_options {
-  my ($program, $version, $usage, $no_input_files_entered,
-    $stdin_is_a_pipe) = @_;
+  my ($arg_ref) = @_;
   # if ($ARGV{'-v'}) { #warn "procedure process_command_line_options $program, "
     # ."$version, $usage, $no_input_files_entered, $stdin_is_redirected, "
     #."$stdout_is_redirected";
@@ -690,8 +731,8 @@ sub process_command_line_options {
 
   # $ARGV{'-infile'}
   if ($ARGV{'-i'}) {
-    display_input_file_argument($ARGV{'-i'}, $no_input_files_entered,
-      $stdin_is_a_pipe
+    display_input_file_argument($ARGV{'-i'},
+      $arg_ref->{'no_input_files_entered'}, $arg_ref->{'stdin_is_a_pipe'}
     );
   }
   # $ARGV{'-outfile'}
@@ -712,32 +753,32 @@ sub process_command_line_options {
 
   # Standard arguments
 
-  if ($ARGV{'--help'} || $ARGV{q{/?}}) {
+  if ($ARGV{'--help'} || $ARGV{q{/?}} || $ARGV{'-help'} || $ARGV{'-h'}) {
     # print Getopt::Euclid::help();    # Displays help in POD format.
     # Displays Getopt::Euclid message in plain text.
     # Getopt::Euclid::_print_pod( Getopt::Euclid::help(), 'paged' );
-    display_help($program, $usage);
+    display_help($arg_ref->{'program'}, $arg_ref->{'usage'});
     exit $SUCCESS;
   }
   if ($ARGV{'--man'}) {
     # print Getopt::Euclid::man();     # Displays man in POD format.
     # Displays Getopt::Euclid message in plain text.
     # Getopt::Euclid::_print_pod( Getopt::Euclid::man(), 'paged' );
-    display_manual($program);
+    display_manual($arg_ref->{'program'});
     exit $SUCCESS;
   }
   if ($ARGV{'--usage'}) {
     # print Getopt::Euclid::usage();   # Displays usage in POD format.
     # Displays Getopt::Euclid message in plain text.
     # Getopt::Euclid::_print_pod( Getopt::Euclid::usage(), 'paged' );
-    display_usage($usage);
+    display_usage($arg_ref->{'usage'});
     exit $SUCCESS;
   }
   if ($ARGV{'--version'}) {
     # print Getopt::Euclid::version(); # Displays version in POD format.
     # Displays Getopt::Euclid message in plain text.
     # Getopt::Euclid::_print_pod( Getopt::Euclid::version(), 'paged' );
-    display_version($version);
+    display_version($arg_ref->{'version'});
     exit $SUCCESS;
   }
 
@@ -753,54 +794,59 @@ sub process_command_line_options {
 
 
 #############################################################################
-# Usage: generate_unique_input_files_array($input_dir,
-#   $input_file_was_entered, $input_files_were_entered_after_two_dashes,
-#   $no_input_files_entered
-# );
+# Usage: generate_unique_input_files_array({
+#    input_dir=>$input_dir,
+#    input_file_was_entered=>$input_file_was_entered,
+#    input_files_were_entered_after_two_dashes=>
+#    $input_files_were_entered_after_two_dashes,
+#    no_input_files_entered=>$no_input_files_entered
+# });
 # Purpose: Generate a unique list of input files based on command line
 #   arguments.
 # Returns: unique list of input files
-# Parameters: the input directory, and a boolean value called no input files
+# Parameters: a hash reference containing named parameters:
+#   the input directory, and a boolean value called no input files
 #   entered, a boolean value indicating whether input files were entered,
 #   a boolean indicating whether no input files were entered
 # Throws: No exceptions
 # Comments: This subroutine does not use $input_path.
 sub generate_unique_input_files_array {
-  my ($input_dir, $input_file_was_entered,
-    $input_files_were_entered_after_two_dashes, $no_input_files_entered)=@_;
+  my ($arg_ref)=@_;
   if ($ARGV{'-v'}) { warn 'procedure generate_unique_input_files_array '
-    . "$input_dir, '$input_file_was_entered', "
-    . "'$input_files_were_entered_after_two_dashes', "
-    . "'$no_input_files_entered'\n";
+    . "$arg_ref->{'input_dir'}, '$arg_ref->{'input_file_was_entered'}', "
+    . "'$arg_ref->{'input_files_were_entered_after_two_dashes'}', "
+    . "'$arg_ref->{'no_input_files_entered'}'\n";
     warn "Add appropriate input files to an input_files array.\n";
-    warn "input directory: $input_dir\n";
-    warn "no input files entered: $no_input_files_entered\n";
+    warn "input directory: $arg_ref->{'input_dir'}\n";
+    warn "no input files entered: $arg_ref->{'no_input_files_entered'}\n";
   }
 
   my @input_file_paths = ();
   # If files exist after the marker --, add them to an array.
-  if ($input_files_were_entered_after_two_dashes) {
+  if ($arg_ref->{'input_files_were_entered_after_two_dashes'}) {
     if ($ARGV{'-v'}) { warn "input_files_were_entered_after_two_dashes\n"; }
     # Change case to lowercase to avoid duplicates with different case.
-    foreach my $file_path (@{ $ARGV{q{--}} }) {
-      # This changes the file paths in @{ $ARGV{q{--}} }.
-      $file_path = lc $file_path;
-    }
-    push @input_file_paths, @{ $ARGV{q{--}} };
+    # Use map instead of for when generating new lists from old.
+    @input_file_paths = map { lc } @{ $ARGV{q{--}} };
+    #foreach my $file_path (@{ $ARGV{q{--}} }) {
+    #  # This changes the file paths in @{ $ARGV{q{--}} }.
+    #  $file_path = lc $file_path;
+    #}
+    #push @input_file_paths, @{ $ARGV{q{--}} };
   }
   # If -i is not equal to '-' (which is default), add it to an array.
-  if ($input_file_was_entered) {
+  if ($arg_ref->{'input_file_was_entered'}) {
     if ($ARGV{'-v'}) { warn "input_file_was_entered\n"; }
     push @input_file_paths, lc $ARGV{'-i'};
   }
   # If no files exist after the marker --, and -i equals -, add a
   # temporary file to the array which holds contents from stdin.
-  if ($no_input_files_entered) {
+  if ($arg_ref->{'no_input_files_entered'}) {
     if ($ARGV{'-v'}) { warn "no_input_files_entered\n"; }
-    push @input_file_paths, lc ($input_dir . 'copy_of_stdin.txt');
+    push @input_file_paths, lc ($arg_ref->{'input_dir'}.'copy_of_stdin.txt');
   }
 
-  return uniq sort @input_file_paths;
+  return wantarray ? uniq sort @input_file_paths : scalar @input_file_paths;
 } # End generate_unique_input_files_array
 
 
@@ -810,47 +856,72 @@ sub generate_unique_input_files_array {
 # Returns: A reference to the pertinant information on a line.
 # Parameters: line reference
 # Throws: No exceptions
-# Comments: TODO: replace field1, field2, field3 with more permanent input.
+# Comments:
 sub process_line {
   my ($line_ref) = @_;
   #chomp $line;    # remove newline character
   if ($ARGV{'-v'}) {
     warn "procedure process_line\n";
-    warn "$line_ref->{field1} $line_ref->{field2} $line_ref->{field3}\n";
+    #warn "$line_ref->{field1} $line_ref->{field2} $line_ref->{field3}\n";
+    #warn "$line_ref->{'Symbol'} $line_ref->{'Company Name'} $line_ref->{'Last Price'} $line_ref->{'Change'} $line_ref->{'% Change'} $line_ref->{'Volume'}\n";
   }
 
+  #return {
+  #  field1 => (defined $line_ref->{field1}) ? $line_ref->{field1} : q{},
+  #  field2 => (defined $line_ref->{field2}) ? $line_ref->{field2} : q{},
+  #  field3 => (defined $line_ref->{field3}) ? $line_ref->{field3} : q{},
+  #};
+  
+  #return {
+  #  'Symbol'       => (defined $line_ref->{'Symbol'})       ? $line_ref->{'Symbol'}       : q{},
+  #  'Company Name' => (defined $line_ref->{'Company Name'}) ? $line_ref->{'Company Name'} : q{},
+  #  'Last Price'   => (defined $line_ref->{'Last Price'})   ? $line_ref->{'Last Price'}   : q{},
+  #  'Change'       => (defined $line_ref->{'Change'})       ? $line_ref->{'Change'}       : q{},
+  #  '% Change'     => (defined $line_ref->{'% Change'})     ? $line_ref->{'% Change'}     : q{},
+  #  'Volume'       => (defined $line_ref->{'Volume'})       ? $line_ref->{'Volume'}       : q{},
+  #};
+  
   return {
-    field1 => (defined $line_ref->{field1}) ? $line_ref->{field1} : q{},
-    field2 => (defined $line_ref->{field2}) ? $line_ref->{field2} : q{},
-    field3 => (defined $line_ref->{field3}) ? $line_ref->{field3} : q{},
+    'Date'        => (defined $line_ref->{'Date'})        ? $line_ref->{'Date'}        : q{},
+    'Open'        => (defined $line_ref->{'Open'})        ? $line_ref->{'Open'}        : q{},
+    'High'        => (defined $line_ref->{'High'})        ? $line_ref->{'High'}        : q{},
+    'Low'         => (defined $line_ref->{'Low'})         ? $line_ref->{'Low'}         : q{},
+    'Close*'      => (defined $line_ref->{'Close*'})      ? $line_ref->{'Close*'}      : q{},
+    'Adj Close**' => (defined $line_ref->{'Adj Close**'}) ? $line_ref->{'Adj Close**'} : q{},
+    'Volume'      => (defined $line_ref->{'Volume'})      ? $line_ref->{'Volume'}      : q{}
   };
 } # End process_line
 
 
 #############################################################################
-# Usage: parse_csv_input_files_and_write_to_output($output_fh, $output_path,
-#          $output_file_was_entered, @input_file_paths);
+# Usage: parse_csv_input_files_and_write_to_output({
+#     output_fh=>$output_fh, output_path=>$output_path,
+#     output_file_was_entered=>$output_file_was_entered,
+#     input_file_paths=>[@input_file_paths]
+# });
 # Purpose: Parse every CSV input file and write it to an output file if
 #          appropriate.
 # Returns: $SUCCESS
-# Parameters: output file handle, output path, boolean value indicating
+# Parameters: a hash reference containing named parameters:
+#             output file handle, output path, boolean value indicating
 #             output file was entered, array of input file paths
 # Throws: None
 # Comments: None
 sub parse_csv_input_files_and_write_to_output {
-  my ($output_fh, $output_path, $output_file_was_entered, @input_file_paths)
-    = @_;
+  my ($arg_ref) = @_;
   if ($ARGV{'-v'}) {
     warn 'procedure parse_csv_input_files_and_write_to_output '
-      ."$output_fh, $output_path, $output_file_was_entered, "
-      ."@input_file_paths\n";
+      ."$arg_ref->{'output_fh'}, $arg_ref->{'output_path'}, "
+      ."$arg_ref->{'output_file_was_entered'}, "
+      ."@{$arg_ref->{'input_file_paths'}}\n";
   }
-  foreach my $file_path (@input_file_paths) {
+  foreach my $file_path (@{$arg_ref->{'input_file_paths'}}) {
+    $return_val = print "Process input file: $file_path\n";
     my @lines = parse_lines_in_csv_input_file($file_path);
     my $hash_ref = {
-      output_fh=>$output_fh,
-      output_path=>$output_path,
-      output_file_was_entered=>$output_file_was_entered,
+      output_fh=>$arg_ref->{'output_fh'},
+      output_path=>$arg_ref->{'output_path'},
+      output_file_was_entered=>$arg_ref->{'output_file_was_entered'},
       # TODO: Consider whether you should use lines=>\@lines instead.
       lines=>[@lines]
     };
@@ -879,23 +950,48 @@ sub parse_lines_in_csv_input_file {
     warn "Reading input file: $input_path.\n";
     warn "Instantiating new CSV format.\n";
   }
-  # Specify the CSV format.
+  # Specify the CSV format as defined in Text::CSV_XS.
   my $csv_format = Text::CSV::Simple->new({
-    sep_char    => q{,},  # Comma delimited
-    escape_char => q{\\}, # Backslashes are escape characters
-    # The \" is needed to get the syntax highlighting to work
-    quote_char  => q{\"},  # Optional double quote around fields
+    # The char used to separate fields, by default a comma. (,). Limited to a
+    # single-byte character, usually in the range from 0x20 (space) to 0x7E
+    # (tilde). When longer sequences are required, use sep. The separation
+    # character can not be equal to the quote character or to the escape
+    # character.
+    sep_char    => ',',    # Comma delimited
+    # The character to escape certain characters inside quoted fields. This
+    # is limited to a single-byte character, usually in the range from 0x20
+    # (space) to 0x7E (tilde). The escape_char defaults to being the
+    # double-quote mark ("). In other words the same as the default
+    # quote_char. This means that doubling the quote mark in a field escapes
+    # it:
+    escape_char => '\\',   # Backslashes are escape characters
+    # The character to quote fields containing blanks or binary data, by
+    # default the double quote character ("). A value of undef suppresses
+    # quote chars (for simple cases only). Limited to a single-byte
+    # character, usually in the range from 0x20 (space) to 0x7E (tilde). When
+    # longer sequences are required, use quote. quote_char can not be equal
+    # to sep_char.
+    quote_char  => '"',    # Optional double quote around fields
+    # When this option is set to true, the whitespace (TAB's and SPACE's)
+    # surrounding the separation character is removed when parsing. If either
+    # TAB or SPACE is one of the three characters sep_char, quote_char, or
+    # escape_char it will not be considered whitespace. Note that all
+    # whitespace is stripped from both start and end of each field.
+    allow_whitespace => 1, # Allow whitespace after comma
+    auto_diag        => 1,
+    binary           => 1,
   });
 
   if ($ARGV{'-v'}) { warn "Map fields to CSV format.\n"; }
-  $csv_format->field_map( qw( field1 field2 field3 ) );
-
+  #$csv_format->field_map( qw( field1 field2 field3 ) );
+  #$csv_format->field_map( "Symbol","Company Name","Last Price","Change","% Change","Volume" );
+  $csv_format->field_map( "Date","Open","High","Low","Close*","Adj Close**","Volume" );
   # for every line in the input file.
   # while ( my $line = <$input_fh> )
   # my @lines;
   if ($ARGV{'-v'}) {warn "Read file with CSV format object: $input_path.\n";}
-  # open input file
-  open my $input_fh, '<', $input_path
+  # open input file , 
+  open my $input_fh, '<:encoding(UTF-8)', $input_path
     or croak( "Cannot open $input_path: $ERRNO\n" ); # $!
   # Parse CSV file
   # foreach my $line_ref ( $csv_format->read_file($input_fh) ) {
@@ -904,7 +1000,7 @@ sub parse_lines_in_csv_input_file {
   my @lines = map { process_line($_) } $csv_format->read_file($input_fh);
   close $input_fh  or croak( "Cannot close $input_path: $ERRNO\n" ); # $!
 
-  return @lines;
+  return wantarray ? @lines : scalar @lines;
 } # End parse_lines_in_csv_input_file
 
 
@@ -943,12 +1039,131 @@ sub write_or_display_results {
   if ($arg_ref->{'output_file_was_entered'}) {
     $return_val = print "Write to output file: $arg_ref->{'output_path'}\n";
   }
-  foreach my $line_ref ( @{$arg_ref->{'lines'}} ) {
-    my $str="$line_ref->{field1} $line_ref->{field2} $line_ref->{field3}\n";
+  # Field types
+  #     The format strings passed to "form" determine what the resulting
+  #     formatted text looks like. Each format consists of a series of field
+  #     specifiers, which are usually separated by literal characters.
+  # 
+  #     "form" understands a far larger number of field specifiers than "format"
+  #     did, designed around a small number of conventions:
+  # 
+  #     *   Each field is enclosed in a pair of braces.
+  # 
+  #     *   Within the braces, left or right angle brackets ("<" or ">"), bars
+  #         ("|"), and single-quotes ("'") indicate various types of single-line
+  #         fields.
+  # 
+  #     *   Left or right square brackets ("[" or "]"), I's ("I"), and double-
+  #         quotes (""") indicate block fields of various types.
+  # 
+  #     *   The direction of the brackets within a field indicates the direction
+  #         towards which text will be justified in that field. For example:
+  # 
+  #             {<<<<<<<<<<<}   Justify the text to the left
+  #             {>>>>>>>>>>>}                  Justify the text to the right
+  #             {>>>>>><<<<<}                 Centre the text
+  #             {<<<<<<>>>>>}   Fully  justify  the  text  to  both  margins
+  # 
+  #         This is even true for numeric fields, which look like: "{>>>>>.<<}".
+  #         The whole digits are right-justified before the dot and the decimals
+  #         are left-justified after it.
+  # 
+  #     *   An "=" at either end of a field (or both ends) indicates the data
+  #         interpolated into the field is to be vertically "middled" within the
+  #         resulting block. That is, the text is to be centred vertically on
+  #         the middle of all the lines produced by the complete format.
+  # 
+  #     *   An "_" at the start and/or end of a field indicates the interpolated
+  #         data is to be vertically "bottomed" within the resulting block. That
+  #         is, the text is to be pushed to the bottom of the lines produced by
+  #         the format.
+  # 
+  #     For example:
+  # 
+  #                                           Field specifier
+  #         Field type                 One-line             Block
+  #         ==========                ==========          ==========
+  # 
+  #         left justified            {<<<<<<<<}          {[[[[[[[[}
+  #         right justified           {>>>>>>>>}          {]]]]]]]]}
+  #         centred                   {>>>><<<<}          {]]]][[[[}
+  #         centred (alternative)     {||||||||}          {IIIIIIII}
+  #         fully justified           {<<<<>>>>}          {[[[[]]]]}
+  #         verbatim                  {''''''''}          {""""""""}
+  # 
+  #         numeric                   {>>>>>.<<}          {]]]]].[[}
+  #         euronumeric               {>>>>>,<<}          {]]]]],[[}
+  #         comma'd                   {>,>>>,>>>.<<}      {],]]],]]].[[}
+  #         space'd                   {> >>> >>>.<<}      {] ]]] ]]].[[}
+  #         eurocomma'd               {>.>>>.>>>,<<}      {].]]].]]],[[}
+  #         Swiss Army comma'd        {>'>>>'>>>,<<}      {]']]]']]],[[}
+  #         subcontinental            {>>,>>,>>>.<<}      {]],]],]]].[[}
+  # 
+  #         signed numeric            {->>>.<<<}          {-]]].[[[}
+  #         post-signed numeric       {>>>>.<<-}          {]]]].[[-}
+  #         paren-signed numeric      {(>>>.<<)}          {(]]].[[)}
+  # 
+  #         prefix currency           {$>>>.<<<}          {$]]].[[[}
+  #         postfix currency          {>>>.<<<DM}         {]]].[[[DM}
+  #         infix currency            {>>>$<< Esc}        {]]]$[[ Esc}
+  # 
+  #         left/middled              {=<<<<<<=}          {=[[[[[[=}
+  #         right/middled             {=>>>>>>=}          {=]]]]]]=}
+  #         infix currency/middled    {=>>$<< Esc}        {=]]$[[ Esc}
+  #         eurocomma'd/middled       {>.>>>.>>>,<<=}     {].]]].]]],[[=}
+  #         etc.
+  # 
+  #         left/bottomed             {_<<<<<<_}          {_[[[[[[_}
+  #         right/bottomed            {_>>>>>>_}          {_]]]]]]_}
+  #         etc.
+  use Perl6::Form;
+  $return_val = print "Stocks:\n";
+  #$return_val = print "Symbol Company Name                              "
+  #  ."       Last Price   Change  % Change        Volume\n";
+  #$return_val = print "-------------------------------------------------"
+  #  ."--------------------------------------------------\n";
+  $return_val = print "Date               Open        High        Low         Close*      Adj Close** Volume\n";
+  $return_val = print "--------------------------------------------------------------------------------------------\n";
+  binmode STDOUT, ':encoding(UTF-8)';
+  #foreach my $line_ref ( sort {$a->{'Symbol'} cmp $b->{'Symbol'}} @{$arg_ref->{'lines'}} ) { 
+  
+  RESULTS:
+  # $a->{'Symbol'} cmp $b->{'Symbol'} or $a->{'Change'} <=> $b->{'Change'}
+  foreach my $line_ref ( sort _by_date_desc @{$arg_ref->{'lines'}} ) {
+    
+    # Skip the display. Go to the output file.
+    if ($line_ref->{'Date'} eq 'Date') { goto OUTPUT_FILE; }
+    
+    DISPLAY:
+    #my $str="$line_ref->{field1} $line_ref->{field2} $line_ref->{field3}\n";
+    #my $str = form(
+    #  '{>>>>} {[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[} '
+    # .'{>>>,>>>,>>>.<<} {>>>>>} {>>>>>>>} {>>>>>>>>>>>}', 
+    #  $line_ref->{'Symbol'}, $line_ref->{'Company Name'}, 
+    #  $line_ref->{'Last Price'}, $line_ref->{'Change'}, 
+    #  $line_ref->{'% Change'}, $line_ref->{'Volume'},
+    #);
+    my $str = form(
+      '{>>>>>>>>>>>>>>>>} {>>>>>>>>>} {>>>>>>>>>} {>>>>>>>>>} {>>>>>>>>>} '
+     .'{>>>>>>>>>} {>>>>>>>>>>>}',
+      $line_ref->{'Date'},$line_ref->{'Open'},$line_ref->{'High'},
+      $line_ref->{'Low'},$line_ref->{'Close*'},$line_ref->{'Adj Close**'},
+      $line_ref->{'Volume'}
+    );
     # Print to stout.
+    
     $return_val = print $str;
+    
+    OUTPUT_FILE:
     # Print to output file if there is one.
     if ($arg_ref->{'output_file_was_entered'}) {
+      #$str=qq{"$line_ref->{'Symbol'}","$line_ref->{'Company Name'}",}
+      #   . qq{"$line_ref->{'Last Price'}","$line_ref->{'Change'}",}
+      #   . qq{"$line_ref->{'% Change'}","$line_ref->{'Volume'}"\n};
+      $str = qq{"$line_ref->{'Date'}","$line_ref->{'Open'}",}
+           . qq{"$line_ref->{'High'}","$line_ref->{'Low'}",}
+           . qq{"$line_ref->{'Close*'}","$line_ref->{'Adj Close**'}",}
+           . qq{"$line_ref->{'Volume'}"\n};
       $return_val = print {$arg_ref->{'output_fh'}} $str
         or croak("Cannot print to file $arg_ref->{'output_path'}: $ERRNO\n");
     }
@@ -960,6 +1175,16 @@ sub write_or_display_results {
   }
   return $SUCCESS;
 } # End write_or_display_results
+
+
+#############################################################################
+# Usage: by_date_desc();
+# Purpose: sort lists
+# Returns: sort operation
+# Parameters: None
+# Throws: No exceptions
+# Comments: None
+sub _by_date_desc { return $b->{'Date'} cmp $a->{'Date'}; }
 
 
 #############################################################################
@@ -995,7 +1220,8 @@ sub display_help {
   $str .= "'                   -outfileC:\\Users\\machine_user\\output.txt'\n";
   $str .= "'                   -outfile C:\\Users\\machine_user\\output.txt'\n\n";
 
-  $str .= "'perl MyModulino.pl -v' displays verbose output\n\n";
+  $str .= "'perl MyModulino.pl -v' displays verbose output\n";
+  $str .= "'                   -verbose'\n\n";
 
   $str .= "'perl MyModulino.pl --help' displays the usage and help on each command and exits\n\n";
   $str .= "'perl MyModulino.pl --man' displays the program manual and exits (similar to the Unix man command)\n\n";
@@ -1037,7 +1263,7 @@ sub display_input_file_argument {
 
 
 #############################################################################
-# Usage: display_input_file_arguments($array_of_input_files_ref);
+# Usage: display_input_file_arguments($ARGV{q{--}});
 # Purpose: display a list of input file arguments.
 # Returns: String containing a list of input file arguments (--).
 # Parameters: a reference to a list of input file arguments
@@ -1049,8 +1275,8 @@ sub display_input_file_arguments {
     ."display_input_file_arguments @{ $array_of_input_files_ref }\n";
   }
 
-  my $str = 'input files after -- or from a pipe: ';
-  $return_val = print 'input files after -- or from a pipe: ';
+  my $str = 'Input files after -- or from a pipe: ';
+  $return_val = print 'Input files after -- or from a pipe: ';
   foreach my $file_path (@{ $array_of_input_files_ref }) {
     $str .= "'$file_path' ";
     $return_val = print "'$file_path' ";
@@ -1189,7 +1415,8 @@ sub display_version {
 sub _common_regexp {
   my ($none) = @_;
   if ($ARGV{'-v'}) { warn "procedure _common_regexp\n"; }
-  use Regexp::Common;
+  use Regexp::Common qw(Email::Address);
+  use Email::Address;
   #   By default, this module exports a single hash (%RE) that stores or
   #   generates commonly needed regular expressions (see "List of available
   #   patterns").
@@ -1307,29 +1534,37 @@ sub _common_regexp {
   #}
 
   # file:///C:/Users/machine_user/Documents/Technical%20References/Perl/MyModulino.pl
-  my $str = "This is a url: http://www.amazon.com/s/ref=nb_sb_noss_2?url=search-alias%3Dstripbooks&field-keywords=Programming+Perl\n"
-    . 'This is additional text.';
-  $return_val = print "Match a uri: $str\n";
+  #my $str = "This is a url: http://www.amazon.com/s/ref=nb_sb_noss_2?url=search-alias%3Dstripbooks&field-keywords=Programming+Perl\n"
+  #  . 'This is additional text.';
+  #$return_val = print "Match a uri: $str\n";
   # fax, file, FTP, gopher, HTTP, news, pop, prospero, tel, telnet, tv and WAIS.
-  my $URI = $RE{URI}{HTTP}{-scheme => 'https?'}{-keep};
-  if ($str =~ /$URI/xms) {
-    my $string = $1;         # Entire string
-    my $scheme = $2;         # The scheme
-    my $host = $3;           # The host (name or address).
-    my $port = $4;           # The port (if any).
-    my $absolute_path1 = $5; # The absolute path, including the query and leading slash.
-    my $absolute_path2 = $6; # The absolute path, including the query, without the leading slash.
-    my $absolute_path3 = $7; # The absolute path, without the query or leading slash.
-    my $query = $8;          # The query, without the question mark.
-    $return_val = print "Match: $string\n";
-    $return_val = print "Scheme: $scheme\n";
-    $return_val = print "Host: $host\n";
-    $return_val = print "Port: $port\n";
-    # $return_val = print "Path with query and slash: $absolute_path3\n";
-    $return_val = print "Path with query without slash: $absolute_path2\n";
-    # $return_val = print "Path without query or slash: $absolute_path3\n";
-    $return_val = print "Query without question mark: $query\n";
-  }
+  #my $URI = $RE{URI}{HTTP}{-scheme => 'https?'}{-keep};
+  #if ($str =~ /$URI/xms) {
+  #  my $string = $1;         # Entire string
+  #  my $scheme = $2;         # The scheme
+  #  my $host = $3;           # The host (name or address).
+  #  my $port = $4;           # The port (if any).
+  #  my $absolute_path1 = $5; # The absolute path, including the query and leading slash.
+  #  my $absolute_path2 = $6; # The absolute path, including the query, without the leading slash.
+  #  my $absolute_path3 = $7; # The absolute path, without the query or leading slash.
+  #  my $query = $8;          # The query, without the question mark.
+  #  $return_val = print "Match: $string\n";
+  #  $return_val = print "Scheme: $scheme\n";
+  #  $return_val = print "Host: $host\n";
+  #  $return_val = print "Port: $port\n";
+  #  # $return_val = print "Path with query and slash: $absolute_path3\n";
+  #  $return_val = print "Path with query without slash: $absolute_path2\n";
+  #  # $return_val = print "Path without query or slash: $absolute_path3\n";
+  #  $return_val = print "Query without question mark: $query\n";
+  #}
+  #my $str = 'mausolf1@hotmail.com';
+  #$return_val = print "Match an email address: $str\n";
+  #my $EMAIL_ADDRESS = $RE{Email}{Address}{-keep};
+  #if ($str =~ /$EMAIL_ADDRESS/xms) {
+  #  #my $email_addr = $RE{ws}{crop}->subs($1);
+  #  my $email_addr = $1;
+  #  $return_val = print "Email address match: $email_addr\n";
+  #}
 
   return $SUCCESS;
 } # End _common_regexp
@@ -1509,11 +1744,8 @@ sub _display_argv_hash {
   my ($none) = @_;
   if ($ARGV{'-v'}) { warn "procedure _display_argv_hash\n"; }
 
-  my @array = (sort keys %ARGV);
-  my $str = "@array\n";
-  @array = (sort values %ARGV);
-  $str .= "@array\n";
-  $return_val = print $str;
+  my $str = _print_data_dumper(\%ARGV);
+  # $return_val = print $str;
 
   return $str;
 } # End _display_argv_hash
@@ -1628,7 +1860,7 @@ sub _print_data_dumper {
 
   use Data::Dumper qw( Dumper );
   my $str = Dumper($arg_ref); # easy to use
-  warn $str;
+  warn "$str\n";
   # The first argument is an anonymous array of values to be dumped. The
   # optional second argument is an anonymous array of names for the values.
   # $str = Data::Dumper->Dump([ $arg_ref ], [qw(output_file_info)]);
@@ -1662,9 +1894,9 @@ __END__
 =head1 USAGE
 
     perl MyModulino.pl [-i[nfile] [=] C:\Users\machine_user\input.txt ]
-    [-o[utfile] [=] C:\Users\machine_user\output.txt ][-v[erbose] ][--help ]
-    [--man ][--usage ][--version ][/? ][-- C:\\Users\\machine_user\\input2.txt
-    [C:\\Users\\machine_user\\input3.txt ...]]
+    [-o[utfile] [=] C:\Users\machine_user\output.txt ][-v[erbose] ][-h[elp] ]
+    [--help ][--man ][--usage ][--version ][/? ]
+    [-- C:\\Users\\machine_user\\input2.txt [C:\\Users\\machine_user\\input3.txt ...]]
 
     Parameters can be specified in any order, except for
     [-- file1, file2, etc.]. These files must appear at the end of the
@@ -1745,6 +1977,10 @@ Print all warnings.
 
 =for Default: Set verbose default to 0.
 
+=item -h[elp]
+
+Print usage help.
+
 =item --help
 
 Print usage help.
@@ -1764,6 +2000,18 @@ Print program usage.
 =item --version
 
 Print version.
+
+=begin section
+
+item <file>
+
+Read in a file to process. This does work. It is listed under $ARGV{'<file>'}.
+
+for Euclid:
+    file.type:    readable
+    file.type.error: The <file> must exist: file. Try specifying the complete path.
+
+=end section
 
 =item -- <file>...
 
@@ -1869,6 +2117,10 @@ expects a file handle and not a string as input.
 Read data from standard in. Reading ends after an empty line. Print input to
 an input file for further processing.
 
+=item process_piped_input
+
+Handle piped input. Read that input using <ARGV> or <>.
+
 =back
 
 =head1 DIAGNOSTICS
@@ -1947,6 +2199,16 @@ line 675, <> line 3."
   * Suggested remedy: Enter the same number of values as the header, or
     remove the line from the input.
 
+=head2 Failed on ...
+
+Failed on ....
+
+  * Problem: The program failed getting CSV from the input.
+  * Likely causes: The input was not formatted as CSV.
+  * Suggested remedy: The input should be reformatted to fit CSV, with double
+    quotes and commas between items. Or, you should change the settings in
+    the program.
+
 =head1 EXIT STATUS
 
 Exit codes:
@@ -1974,6 +2236,8 @@ for failure.
 
     Configuration is done for command line parameters with the Getopt::Euclid
     package using syntax in these pod statements.
+
+    Configuration for Text::CSV::Simple is specified in the program.
 
 =head1 DEPENDENCIES
 
@@ -2095,7 +2359,7 @@ for failure.
 # quotemeta
 # wantarray
 
-# my $nbr = _common_regexp();
+#my $nbr = _common_regexp();
 # _memory();
 # my @array_of_arrays = _compare('0.1 CPU SECONDS');
 # _display_data_between_data_and_end();
